@@ -301,7 +301,7 @@ def get_recommendations(title: str, limit: int = 5):
         ).mappings().first()
 
         if not target:
-            raise HTTPException(status_code=404, detail="Тайтл не найден")
+            raise HTTPException(status_code=404, detail="Title not found")
 
         candidates_sql = """
             SELECT

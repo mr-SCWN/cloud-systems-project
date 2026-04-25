@@ -1,0 +1,104 @@
+- hosts: all
+  become: yes
+
+  vars:
+    backend_host: 192.168.56.12
+
+  tasks:
+    - name: update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: install frontend system packages
+      ansible.builtin.apt:
+        name:
+          - nginx
+          - curl
+          - ca-certificates
+          - gnupg
+          - rsync
+        state: present
+
+    - name: add NodeSource repository for Node.js 20
+      ansible.builtin.shell: curl -fsSL https://deb.nodesource.com/setup_20.x | bash -
+      args:
+        executable: /bin/bash
+        creates: /etc/apt/sources.list.d/nodesource.list
+
+    - name: install nodejs
+      ansible.builtin.apt:
+        update_cache: yes
+        name: nodejs
+        state: present
+
+    - name: create frontend deployment directory
+      ansible.builtin.file:
+        path: /opt/netflix-frontend
+        state: directory
+        mode: "0755"
+
+    - name: sync frontend source code
+      ansible.builtin.shell: |
+        rsync -a --delete \
+          --exclude node_modules \
+          --exclude dist \
+          /vagrant/frontend/ /opt/netflix-frontend/
+      args:
+        executable: /bin/bash
+
+    - name: install frontend dependencies
+      ansible.builtin.command: npm ci
+      args:
+        chdir: /opt/netflix-frontend
+
+    - name: build frontend in production mode
+      ansible.builtin.command: npm run build
+      args:
+        chdir: /opt/netflix-frontend
+      environment:
+        VITE_API_URL: /api
+
+    - name: create nginx web root
+      ansible.builtin.file:
+        path: /var/www/netflix
+        state: directory
+        mode: "0755"
+
+    - name: copy built frontend to nginx web root
+      ansible.builtin.shell: |
+        rm -rf /var/www/netflix/*
+        cp -r /opt/netflix-frontend/dist/* /var/www/netflix/
+      args:
+        executable: /bin/bash
+
+    - name: install nginx configuration for frontend
+      ansible.builtin.template:
+        src: templates/nginx-netflix.conf.j2
+        dest: /etc/nginx/sites-available/netflix
+        mode: "0644"
+      notify: restart nginx
+
+    - name: enable nginx site
+      ansible.builtin.file:
+        src: /etc/nginx/sites-available/netflix
+        dest: /etc/nginx/sites-enabled/netflix
+        state: link
+      notify: restart nginx
+
+    - name: disable default nginx site
+      ansible.builtin.file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+      notify: restart nginx
+
+    - name: ensure nginx is enabled and started
+      ansible.builtin.service:
+        name: nginx
+        enabled: yes
+        state: started
+
+  handlers:
+    - name: restart nginx
+      ansible.builtin.service:
+        name: nginx
+        state: restarted

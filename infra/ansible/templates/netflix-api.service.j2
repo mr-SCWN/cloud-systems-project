@@ -1,0 +1,17 @@
+[Unit]
+Description=Netflix FastAPI Backend
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=vagrant
+Group=vagrant
+WorkingDirectory=/vagrant
+Environment=PYTHONPATH=/vagrant
+Environment=DATABASE_URL=postgresql+psycopg2://{{ db_user }}:{{ db_password }}@{{ db_host }}:5432/{{ db_name }}
+ExecStart=/opt/netflix-backend-venv/bin/uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

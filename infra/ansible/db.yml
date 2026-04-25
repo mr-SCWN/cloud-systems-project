@@ -1,0 +1,137 @@
+- hosts: all
+  become: yes
+
+  vars:
+    postgresql_version: 14
+    db_name: netflix_db
+    db_user: netflix_user
+    db_password: netflix_pass
+    backend_ip: 192.168.56.12
+    local_database_url: "postgresql+psycopg2://{{ db_user }}:{{ db_password }}@127.0.0.1:5432/{{ db_name }}"
+
+  tasks:
+    - name: update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+
+    - name: install PostgreSQL and Python packages
+      ansible.builtin.apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+          - python3
+          - python3-pip
+          - python3-venv
+          - python3-psycopg2
+          - acl
+        state: present
+
+    - name: ensure PostgreSQL is enabled and started
+      ansible.builtin.service:
+        name: postgresql
+        state: started
+        enabled: yes
+
+    - name: allow PostgreSQL to listen on all interfaces
+      ansible.builtin.lineinfile:
+        path: "/etc/postgresql/{{ postgresql_version }}/main/postgresql.conf"
+        regexp: '^#?listen_addresses\s*='
+        line: "listen_addresses = '*'"
+      notify: restart postgresql
+
+    - name: allow backend host to connect to PostgreSQL
+      ansible.builtin.lineinfile:
+        path: "/etc/postgresql/{{ postgresql_version }}/main/pg_hba.conf"
+        line: "host    {{ db_name }}    {{ db_user }}    {{ backend_ip }}/32    md5"
+        insertafter: EOF
+        state: present
+      notify: restart postgresql
+
+    - name: flush PostgreSQL handlers
+      ansible.builtin.meta: flush_handlers
+
+    - name: create database user if missing
+      become_user: postgres
+      ansible.builtin.shell: |
+        psql -tAc "SELECT 1 FROM pg_roles WHERE rolname='{{ db_user }}'" | grep -q 1 || \
+        psql -c "CREATE USER {{ db_user }} WITH PASSWORD '{{ db_password }}';"
+      args:
+        executable: /bin/bash
+
+    - name: create database if missing
+      become_user: postgres
+      ansible.builtin.shell: |
+        psql -tAc "SELECT 1 FROM pg_database WHERE datname='{{ db_name }}'" | grep -q 1 || \
+        createdb -O {{ db_user }} {{ db_name }}
+      args:
+        executable: /bin/bash
+
+    - name: create Python virtual environment for import script
+      ansible.builtin.command: python3 -m venv /opt/netflix-db-venv
+      args:
+        creates: /opt/netflix-db-venv/bin/activate
+
+    - name: install Python packages for database import
+      ansible.builtin.pip:
+        virtualenv: /opt/netflix-db-venv
+        name:
+          - pandas
+          - sqlalchemy
+          - psycopg2-binary
+          - python-dotenv
+
+    - name: check if netflix_titles table already exists
+      become_user: postgres
+      ansible.builtin.command: psql -d {{ db_name }} -tAc "SELECT to_regclass('public.netflix_titles')"
+      register: netflix_table_check
+      changed_when: false
+
+    - name: apply SQL schema if table is missing
+      become_user: postgres
+      ansible.builtin.command: psql -d {{ db_name }} -f /vagrant/database/schema.sql
+      when: netflix_table_check.stdout.strip() != 'netflix_titles'
+
+    - name: ensure db user can use public schema
+      become_user: postgres
+      ansible.builtin.command: psql -d {{ db_name }} -c "GRANT USAGE ON SCHEMA public TO {{ db_user }};"
+      changed_when: false
+
+    - name: ensure db user owns netflix_titles table
+      become_user: postgres
+      ansible.builtin.command: psql -d {{ db_name }} -c "ALTER TABLE netflix_titles OWNER TO {{ db_user }};"
+      changed_when: false
+
+    - name: grant privileges on netflix_titles to db user
+      become_user: postgres
+      ansible.builtin.command: psql -d {{ db_name }} -c "GRANT ALL PRIVILEGES ON TABLE netflix_titles TO {{ db_user }};"
+      changed_when: false
+
+    - name: count rows in netflix_titles before import
+      become_user: postgres
+      ansible.builtin.command: psql -d {{ db_name }} -tAc "SELECT COUNT(*) FROM netflix_titles"
+      register: imported_rows_before
+      changed_when: false
+
+    - name: import CSV data into PostgreSQL when table is empty
+      ansible.builtin.command: /opt/netflix-db-venv/bin/python /vagrant/database/import_netflix.py
+      args:
+        chdir: /vagrant
+      environment:
+        DATABASE_URL: "{{ local_database_url }}"
+      when: imported_rows_before.stdout.strip() == '0'
+
+    - name: count rows in netflix_titles after import
+      become_user: postgres
+      ansible.builtin.command: psql -d {{ db_name }} -tAc "SELECT COUNT(*) FROM netflix_titles"
+      register: imported_rows_after
+      changed_when: false
+
+    - name: show imported rows count
+      ansible.builtin.debug:
+        msg: "Imported rows: {{ imported_rows_after.stdout.strip() }}"
+
+  handlers:
+    - name: restart postgresql
+      ansible.builtin.service:
+        name: postgresql
+        state: restarted

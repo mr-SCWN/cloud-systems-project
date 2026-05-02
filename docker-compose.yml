@@ -1,0 +1,53 @@
+version: "3.9"
+
+services:
+  db:
+    build:
+      context: .
+      dockerfile: database/Dockerfile
+    container_name: netflix-db
+    environment:
+      POSTGRES_DB: netflix_db
+      POSTGRES_USER: netflix_user
+      POSTGRES_PASSWORD: netflix_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U netflix_user -d netflix_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: netflix-backend
+    environment:
+      DATABASE_URL: postgresql+psycopg2://netflix_user:netflix_pass@db:5432/netflix_db
+    depends_on:
+      db:
+        condition: service_healthy
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: netflix-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
+
+volumes:
+  postgres_data:

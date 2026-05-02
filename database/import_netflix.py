@@ -1,10 +1,13 @@
 import os
+from pathlib import Path
 import re
 import time
 import pandas as pd
 from dotenv import load_dotenv
 from sqlalchemy import create_engine, text
 
+BASE_DIR = Path(__file__).resolve().parents[1]
+CSV_PATH = Path(os.getenv("CSV_PATH", BASE_DIR / "data" / "netflix_titles.csv"))
 
 def parse_date(value):
     if pd.isna(value):
@@ -40,15 +43,14 @@ def main():
     start_time = time.time()
 
     print("1. Loading .env ...")
-    load_dotenv()
+    load_dotenv(BASE_DIR / ".env")
 
     database_url = os.getenv("DATABASE_URL")
     if not database_url:
         raise ValueError("No DATABASE_URL found in .env file")
 
     print("2. Loading CSV...")
-    csv_path = os.path.join("data", "netflix_titles.csv")
-    df = pd.read_csv(csv_path)
+    df = pd.read_csv(CSV_PATH)
 
     print(f"   Rows loaded: {len(df)}")
     print(f"   Columns: {list(df.columns)}")

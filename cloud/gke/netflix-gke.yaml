@@ -1,0 +1,204 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: netflix
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: netflix-secret
+  namespace: netflix
+type: Opaque
+stringData:
+  POSTGRES_DB: netflix_db
+  POSTGRES_USER: netflix_user
+  POSTGRES_PASSWORD: netflix_pass
+  BACKEND_DATABASE_URL: postgresql+psycopg2://netflix_user:netflix_pass@db:5432/netflix_db
+  DB_INIT_DATABASE_URL: postgresql+psycopg2://netflix_user:netflix_pass@localhost:5432/netflix_db
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-pvc
+  namespace: netflix
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: db
+  namespace: netflix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+        - name: db
+          image: us-central1-docker.pkg.dev/cloud-systems-netflix/netflix-repo/netflix-db:gke1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 5432
+          env:
+              - name: POSTGRES_DB
+                valueFrom:
+                  secretKeyRef:
+                    name: netflix-secret
+                    key: POSTGRES_DB
+              - name: POSTGRES_USER
+                valueFrom:
+                  secretKeyRef:
+                    name: netflix-secret
+                    key: POSTGRES_USER
+              - name: POSTGRES_PASSWORD
+                valueFrom:
+                  secretKeyRef:
+                    name: netflix-secret
+                    key: POSTGRES_PASSWORD
+              - name: DATABASE_URL
+                valueFrom:
+                  secretKeyRef:
+                    name: netflix-secret
+                    key: DB_INIT_DATABASE_URL
+              - name: PGDATA
+                value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: postgres-data
+              mountPath: /var/lib/postgresql/data
+          livenessProbe:
+            exec:
+              command: ["pg_isready", "-U", "netflix_user", "-d", "netflix_db"]
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "netflix_user", "-d", "netflix_db"]
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: postgres-data
+          persistentVolumeClaim:
+            claimName: postgres-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: db
+  namespace: netflix
+spec:
+  selector:
+    app: db
+  ports:
+    - port: 5432
+      targetPort: 5432
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: netflix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+        - name: backend
+          image: us-central1-docker.pkg.dev/cloud-systems-netflix/netflix-repo/netflix-backend:gke1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8000
+          env:
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: netflix-secret
+                  key: BACKEND_DATABASE_URL
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+  namespace: netflix
+spec:
+  selector:
+    app: backend
+  ports:
+    - port: 8000
+      targetPort: 8000
+  type: ClusterIP
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: netflix
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: us-central1-docker.pkg.dev/cloud-systems-netflix/netflix-repo/netflix-frontend:gke1
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 80
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: netflix
+spec:
+  selector:
+    app: frontend
+  ports:
+    - port: 80
+      targetPort: 80
+  type: LoadBalancer

@@ -1,1 +1,52 @@
+# Secrets
 .env
+.env.*
+!.env.example
+
+# GCP / SSH keys
+cloud/ansible/gcp_vm_key
+cloud/ansible/gcp_vm_key.pub
+*.pem
+*.key
+
+# Terraform
+cloud/terraform/.terraform/
+cloud/terraform/terraform.tfstate
+cloud/terraform/terraform.tfstate.*
+cloud/terraform/*.tfvars
+!cloud/terraform/terraform.tfvars.example
+
+# Vagrant
+.vagrant/
+
+# Python
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
+**/.pytest_cache/
+**/.mypy_cache/
+**/.venv/
+**/venv/
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.cache/
+
+# Build / deploy artifacts
+cloud/deploy/
+*.tar.gz
+*.zip
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

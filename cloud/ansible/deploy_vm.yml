@@ -1,0 +1,72 @@
+- name: Deploy Netflix project on GCP VM
+  hosts: cloud_vm
+  become: yes
+
+  vars:
+    app_dir: /opt/netflix-app
+    app_user: ivankaliadzich
+    local_archive: /mnt/c/vagrant/cloud-systems-project/cloud/deploy/netflix-cloud-app.tar.gz
+
+  tasks:
+    - name: Update apt cache
+      ansible.builtin.apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+          - python3-pip
+        state: present
+
+    - name: Ensure docker service is enabled and running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: yes
+
+    - name: Add user to docker group
+      ansible.builtin.user:
+        name: "{{ app_user }}"
+        groups: docker
+        append: yes
+
+    - name: Create application directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "0755"
+
+    - name: Upload and unpack application archive
+      ansible.builtin.unarchive:
+        src: "{{ local_archive }}"
+        dest: "{{ app_dir }}"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        remote_src: no
+
+    - name: Start application with docker compose
+      ansible.builtin.shell: docker compose -f docker-compose.yml -f cloud/docker-compose.vm.yml up -d --build
+      args:
+        chdir: "{{ app_dir }}"
+      environment:
+        COMPOSE_BAKE: "false"
+
+    - name: Wait for frontend on port 80
+      ansible.builtin.wait_for:
+        port: 80
+        timeout: 300
+
+    - name: Show running containers
+      ansible.builtin.command:
+        cmd: docker compose -f docker-compose.yml -f cloud/docker-compose.vm.yml ps
+        chdir: "{{ app_dir }}"
+      register: compose_ps
+
+    - name: Print compose status
+      ansible.builtin.debug:
+        var: compose_ps.stdout_lines

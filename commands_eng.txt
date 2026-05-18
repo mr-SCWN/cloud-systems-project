@@ -1,0 +1,254 @@
+Stage 1
+
+Enable Supabase and check the .env file.
+Run commands from the project root.
+
+Check database import:
+python database\import_netflix.py
+
+Install frontend dependencies if needed:
+npm.cmd install
+
+Start backend:
+uvicorn backend.app.main:app --reload
+
+Check backend in browser:
+http://127.0.0.1:8000
+Swagger:
+http://127.0.0.1:8000/docs
+
+Start frontend:
+cd C:\vagrant\cloud-systems-project\frontend
+npm.cmd run dev
+
+Check frontend in browser:
+http://localhost:5173
+
+Verification:
+3.0 -> GET /titles
+3.5 -> GET /titles with query parameters:
+       type=Movie
+       country=United States
+       title=Blood
+4.0 -> POST /titles
+4.5 -> PUT /titles/{show_id}
+5.0 -> GET /stats/top-genres
+       GET /stats/releases-by-year
+       GET /recommendations?title=Blood%20%26%20Water
+
+--------------------------------------------------
+
+Stage 2
+
+Start Vagrant machines:
+vagrant up
+
+Check machine status:
+vagrant status
+
+Check db VM:
+vagrant ssh db -c "hostname"
+vagrant ssh db -c "sudo -u postgres psql -d netflix_db -c \"SELECT COUNT(*) FROM netflix_titles;\""
+
+Check backend VM:
+vagrant ssh backend -c "systemctl status netflix-api --no-pager"
+vagrant ssh backend -c "curl http://127.0.0.1:8000/"
+vagrant ssh backend -c "curl \"http://127.0.0.1:8000/titles?limit=3\""
+vagrant ssh backend -c "curl \"http://127.0.0.1:8000/stats/top-genres\""
+
+Check private network:
+vagrant ssh backend -c "ping -c 1 192.168.56.11 && ping -c 1 192.168.56.13"
+
+Check frontend VM:
+vagrant ssh frontend -c "systemctl status nginx --no-pager"
+vagrant ssh frontend -c "curl http://127.0.0.1/"
+vagrant ssh frontend -c "curl http://127.0.0.1/api/titles?limit=1"
+
+Open in browser:
+http://localhost:8080
+
+--------------------------------------------------
+
+Stage 3
+
+Stop Stage 2:
+vagrant halt
+vagrant status
+
+Start Docker application:
+docker compose up -d --build
+
+Check containers:
+docker compose ps
+docker compose exec backend curl http://localhost:8000/
+docker compose exec backend curl "http://localhost:8000/titles?limit=3"
+docker compose exec backend curl "http://localhost:8000/stats/top-genres"
+docker compose exec db psql -U netflix_user -d netflix_db -c "SELECT COUNT(*) FROM netflix_titles;"
+
+Open in browser:
+http://localhost:8080
+
+--------------------------------------------------
+
+Stage 4
+
+Stop Stage 3:
+docker compose down
+
+Clean previous kind cluster:
+kind delete cluster --name netflix-cluster
+
+Create cluster:
+kind create cluster --config=k8s/kind-cluster.yaml
+kubectl cluster-info
+kubectl get nodes
+
+Build images:
+docker build -t netflix-db:k8s -f database/Dockerfile .
+docker build -t netflix-backend:k8s -f backend/Dockerfile .
+docker build -t netflix-frontend:k8s ./frontend
+
+Load images into kind:
+kind load docker-image netflix-db:k8s --name netflix-cluster
+kind load docker-image netflix-backend:k8s --name netflix-cluster
+kind load docker-image netflix-frontend:k8s --name netflix-cluster
+
+Apply manifests:
+kubectl apply -f k8s/pv.yaml
+kubectl apply -f k8s/pvc.yaml
+kubectl apply -f k8s/db-deployment.yaml
+kubectl apply -f k8s/db-service.yaml
+kubectl apply -f k8s/backend-deployment.yaml
+kubectl apply -f k8s/backend-service.yaml
+kubectl apply -f k8s/frontend-deployment.yaml
+kubectl apply -f k8s/frontend-service.yaml
+
+Check:
+kubectl get pods
+kubectl get svc
+
+Open in browser:
+http://localhost:8080
+
+Requirement for grade 5.0:
+Get the current db pod name:
+kubectl get pods -l app=db
+
+Check the record count:
+kubectl exec -it <db-pod-name> -- psql -U netflix_user -d netflix_db -c "SELECT COUNT(*) FROM netflix_titles;"
+
+Delete the db pod:
+kubectl delete pod -l app=db
+
+Wait until a new db pod reaches 1/1:
+kubectl get pods -w
+
+Check data persistence again with the new pod name:
+kubectl exec -it <new-db-pod-name> -- psql -U netflix_user -d netflix_db -c "SELECT COUNT(*) FROM netflix_titles;"
+
+--------------------------------------------------
+
+Stage 5 (VM)
+
+Stop Stage 4:
+kubectl delete -f k8s/frontend-service.yaml
+kubectl delete -f k8s/frontend-deployment.yaml
+kubectl delete -f k8s/backend-service.yaml
+kubectl delete -f k8s/backend-deployment.yaml
+kubectl delete -f k8s/db-service.yaml
+kubectl delete -f k8s/db-deployment.yaml
+kubectl delete -f k8s/pvc.yaml
+kubectl delete -f k8s/pv.yaml
+kind delete cluster --name netflix-cluster
+
+Create VM infrastructure:
+cd C:\vagrant\cloud-systems-project\cloud\terraform
+terraform init
+terraform apply
+
+Connect to WSL Ubuntu:
+wsl -d Ubuntu
+
+In Ubuntu, go to the project root:
+cd /mnt/c/vagrant/cloud-systems-project
+
+Prepare deployment archive:
+mkdir -p cloud/deploy
+tar \
+  --exclude='.git' \
+  --exclude='.vagrant' \
+  --exclude='frontend/node_modules' \
+  --exclude='frontend/dist' \
+  --exclude='backend/__pycache__' \
+  --exclude='database/__pycache__' \
+  -czf cloud/deploy/netflix-cloud-app.tar.gz \
+  backend frontend database data docker-compose.yml .env cloud/docker-compose.vm.yml
+
+Check archive:
+ls -lh cloud/deploy/netflix-cloud-app.tar.gz
+
+Update inventory.ini with the current external IP from terraform apply:
+nano /mnt/c/vagrant/cloud-systems-project/cloud/ansible/inventory.ini
+
+Example:
+[cloud_vm]
+netflix-vm ansible_host=<VM_EXTERNAL_IP> ansible_user=ivankaliadzich ansible_ssh_private_key_file=/home/ivankaliadzich/.ssh/gcp_vm_key
+
+Run Ansible:
+cd /mnt/c/vagrant/cloud-systems-project/cloud/ansible
+ansible-playbook -i inventory.ini deploy_vm.yml
+
+Open in browser:
+http://<VM_EXTERNAL_IP>
+
+--------------------------------------------------
+
+Stage 5 (GKE)
+
+Use PowerShell on Windows.
+
+Enable required APIs:
+gcloud.cmd services enable artifactregistry.googleapis.com container.googleapis.com
+gcloud.cmd artifacts repositories list --location=us-central1
+gcloud.cmd auth configure-docker us-central1-docker.pkg.dev
+
+Build images:
+docker build -f database/Dockerfile -t us-central1-docker.pkg.dev/cloud-systems-netflix/netflix-repo/netflix-db:gke1 .
+docker build -f backend/Dockerfile -t us-central1-docker.pkg.dev/cloud-systems-netflix/netflix-repo/netflix-backend:gke1 .
+docker build -t us-central1-docker.pkg.dev/cloud-systems-netflix/netflix-repo/netflix-frontend:gke1 ./frontend
+
+Push images:
+docker push us-central1-docker.pkg.dev/cloud-systems-netflix/netflix-repo/netflix-db:gke1
+docker push us-central1-docker.pkg.dev/cloud-systems-netflix/netflix-repo/netflix-backend:gke1
+docker push us-central1-docker.pkg.dev/cloud-systems-netflix/netflix-repo/netflix-frontend:gke1
+
+Create GKE cluster (skip if it already exists and is still running):
+gcloud.cmd container clusters create-auto netflix-gke --location us-central1
+
+Configure kubectl access:
+$env:USE_GKE_GCLOUD_AUTH_PLUGIN="True"
+gcloud.cmd container clusters get-credentials netflix-gke --location us-central1
+kubectl get nodes
+
+Deploy the application:
+kubectl apply -f cloud\gke\netflix-gke.yaml
+
+Check deployment:
+kubectl get pods -n netflix
+kubectl get svc -n netflix
+kubectl get pvc -n netflix
+
+If pods are not ready yet, wait until backend, frontend, and db are all 1/1:
+kubectl get pods -n netflix -w
+
+Check the database:
+kubectl logs deployment/db -n netflix --tail=50
+kubectl exec -n netflix deployment/db -- psql -U netflix_user -d netflix_db -c "SELECT COUNT(*) FROM netflix_titles;"
+
+Open frontend:
+kubectl get svc -n netflix
+
+Take the EXTERNAL-IP of the frontend service and open:
+http://<FRONTEND_EXTERNAL_IP>
+
+If one browser blocks the page, try another browser.
